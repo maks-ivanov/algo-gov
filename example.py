@@ -28,7 +28,7 @@ from gov.testing.resources import (
 )
 
 
-def simple_amm():
+def simple_gov():
     client = getAlgodClient()
 
     print("Alice is generating temporary accounts...")
@@ -84,7 +84,6 @@ def simple_amm():
     print("Charlie's voting info:", getUserLocalState(client, acct1))
     print(getLastBlockTimestamp(client)[1] - t0)
 
-
     sleep(3)
     registerProposal(client, governorAppId, proposalAppId, creator)
     print(getLastBlockTimestamp(client)[1] - t0)
@@ -96,84 +95,7 @@ def simple_amm():
 
     sleep(3)
     vote(client, governorAppId, proposalAppId, 1, creator)
-    print(getAppGlobalState(client, proposalAppId))
-
-    # print("Supplying AMM with initial token A and token B")
-    # supply(client=client, appID=appID, qA=500_000, qB=100_000_000, supplier=creator)
-    # ammBalancesSupplied = getBalances(client, get_application_address(appID))
-    # creatorBalancesSupplied = getBalances(client, creator.getAddress())
-    # poolTokenFirstAmount = creatorBalancesSupplied[poolToken]
-    # print("AMM's balances: ", ammBalancesSupplied)
-    # print("Alice's balances: ", creatorBalancesSupplied)
-    #
-    # print("Supplying AMM with same token A and token B")
-    # supply(client=client, appID=appID, qA=100_000, qB=20_000_000, supplier=creator)
-    # ammBalancesSupplied = getBalances(client, get_application_address(appID))
-    # creatorBalancesSupplied = getBalances(client, creator.getAddress())
-    #
-    # print("AMM's balances: ", ammBalancesSupplied)
-    # print("Alice's balances: ", creatorBalancesSupplied)
-    #
-    # print("Supplying AMM with too large ratio of token A and token B")
-    # supply(client=client, appID=appID, qA=100_000, qB=100_000, supplier=creator)
-    # ammBalancesSupplied = getBalances(client, get_application_address(appID))
-    # creatorBalancesSupplied = getBalances(client, creator.getAddress())
-    # print("AMM's balances: ", ammBalancesSupplied)
-    # print("Alice's balances: ", creatorBalancesSupplied)
-    #
-    # print("Supplying AMM with too small ratio of token A and token B")
-    # supply(client=client, appID=appID, qA=100_000, qB=100_000_000, supplier=creator)
-    # ammBalancesSupplied = getBalances(client, get_application_address(appID))
-    # creatorBalancesSupplied = getBalances(client, creator.getAddress())
-    #
-    # print("AMM's balances: ", ammBalancesSupplied)
-    # print("Alice's balances: ", creatorBalancesSupplied)
-    # poolTokenTotalAmount = creatorBalancesSupplied[poolToken]
-    # print(" ")
-    # print("Alice is exchanging her Token A for Token B")
-    # marketSwap(client=client, appID=appID, tokenId=govToken, amount=1_000, trader=creator)
-    # ammBalancesTraded = getBalances(client, get_application_address(appID))
-    # creatorBalancesTraded = getBalances(client, creator.getAddress())
-    # print("AMM's balances: ", ammBalancesTraded)
-    # print("Alice's balances: ", creatorBalancesTraded)
-    #
-    # print("Alice is exchanging her Token B for Token A")
-    # marketSwap(
-    #     client=client,
-    #     appID=appID,
-    #     tokenId=tokenB,
-    #     amount=int(1_000_000 * 1.003),
-    #     trader=creator,
-    # )
-    # ammBalancesTraded = getBalances(client, get_application_address(appID))
-    # creatorBalancesTraded = getBalances(client, creator.getAddress())
-    # print("AMM's balances: ", ammBalancesTraded)
-    # print("Alice's balances: ", creatorBalancesTraded)
-    # print(" ")
-    #
-    # print("Withdrawing first supplied liquidity from AMM")
-    # print("Withdrawing: ", poolTokenFirstAmount)
-    # withdraw(
-    #     client=client,
-    #     appID=appID,
-    #     poolTokenAmount=poolTokenFirstAmount,
-    #     withdrawAccount=creator,
-    # )
-    # ammBalancesWithdrawn = getBalances(client, get_application_address(appID))
-    # print("AMM's balances: ", ammBalancesWithdrawn)
-    #
-    # print("Withdrawing remainder of the supplied liquidity from AMM")
-    # poolTokenTotalAmount -= poolTokenFirstAmount
-    # withdraw(
-    #     client=client,
-    #     appID=appID,
-    #     poolTokenAmount=poolTokenTotalAmount,
-    #     withdrawAccount=creator,
-    # )
-    # ammBalancesWithdrawn = getBalances(client, get_application_address(appID))
-    # print("AMM's balances: ", ammBalancesWithdrawn)
-    # print("Closing AMM")
-    # closeAmm(client=client, appID=appID, closer=creator)
+    print(getAppGlobalState(client, governorAppId))
 
 
-simple_amm()
+simple_gov()

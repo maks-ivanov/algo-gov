@@ -25,55 +25,6 @@ def activate_proposal_program():
     return on_setup
 
 
-def vote_program():
-    authorization_txn_id = Txn.group_index() - Int(1)
-    external_registration_id = App.globalGetEx(
-        Int(1), App.globalGet(REGISTRATION_ID_KEY)
-    )
-
-    address_voting_power = App.localGetEx(
-        Txn.sender(), Int(1), ADDRESS_VOTING_POWER_KEY
-    )
-
-    vote_value = Btoi(Txn.application_args[1])
-    on_vote = Seq(
-        address_voting_power,
-        external_registration_id,
-        Assert(external_registration_id.value() == Global.current_application_id()),
-        Assert(
-            # verify vote authorization
-            And(
-                Gtxn[authorization_txn_id].sender() == Txn.sender(),
-                Gtxn[authorization_txn_id].type_enum() == TxnType.ApplicationCall,
-                Gtxn[authorization_txn_id].application_id()
-                == App.globalGet(GOVERNOR_ID_KEY),
-                Gtxn[authorization_txn_id].application_args[0]
-                == Bytes("authorize_and_burn_vote"),
-                # authorization for the current proposal
-                Gtxn[authorization_txn_id].applications[1]
-                == Global.current_application_id(),
-            )
-        ),
-        Assert(address_voting_power.hasValue()),
-        If(vote_value > Int(0))
-        .Then(
-            App.globalPut(
-                FOR_VOTES_KEY,
-                App.globalGet(FOR_VOTES_KEY) + address_voting_power.value(),
-            )
-        )
-        .Else(
-            App.globalPut(
-                FOR_VOTES_KEY,
-                App.globalGet(AGAINST_VOTES_KEY) + address_voting_power.value(),
-            )
-        ),
-        Approve(),
-    )
-
-    return on_vote
-
-
 def execute_program():
     on_execute = Seq(
         InnerTxnBuilder.Begin(),
@@ -99,20 +50,16 @@ def approval_program():
         App.globalPut(
             TARGET_ID_KEY, Txn.accounts[1]
         ),  # should be application in the future
-        App.globalPut(FOR_VOTES_KEY, Int(0)),
-        App.globalPut(AGAINST_VOTES_KEY, Int(0)),
         Approve(),
     )
 
     on_activate = activate_proposal_program()
-    on_vote = vote_program()
     on_execute = execute_program()
 
     on_call_method = Txn.application_args[0]
     on_call = Seq(
         Cond(
             [on_call_method == Bytes("activate"), on_activate],
-            [on_call_method == Bytes("vote"), on_vote],
             [on_call_method == Bytes("execute"), on_execute],
         ),
     )

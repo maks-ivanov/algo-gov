@@ -108,8 +108,8 @@ def createGovernor(
     """
     approval, clear = getGovernorContracts(client)
 
-    # 7 params + creation time + num active proposals + 5 proposals
-    globalSchema = transaction.StateSchema(num_uints=7 + 2 + 5, num_byte_slices=1)
+    # 7 params + creation time + num active proposals + 5 proposal slots with for, against, and can_execute
+    globalSchema = transaction.StateSchema(num_uints=7 + 2 + 5 * 4, num_byte_slices=1)
     # tokens committed, voting power, proposal power, proposals voted
     localSchema = transaction.StateSchema(num_uints=3 + 5, num_byte_slices=0)
 
@@ -268,8 +268,8 @@ def createProposal(
 ) -> None:
     approval, clear = getProposalContracts(client)
 
-    # bytes: creator, target, registration id; uints: governor, for, against, cancelled
-    globalSchema = transaction.StateSchema(num_uints=4, num_byte_slices=3)
+    # bytes: creator, target, registration id; uints: governor
+    globalSchema = transaction.StateSchema(num_uints=1, num_byte_slices=3)
     # tokens committed, voting power, proposal power, proposals voted
     localSchema = transaction.StateSchema(num_uints=0, num_byte_slices=0)
 
@@ -323,7 +323,7 @@ def activateProposal(
     proposalAppId: int,
     governorAppId: int,
     registrationId: int,
-    funder: Account,
+    account: Account,
 ) -> int:
 
     appAddr = get_application_address(proposalAppId)
@@ -333,14 +333,14 @@ def activateProposal(
     fundingAmount = 100000 + 1000 * 2
 
     fundAppTxn = transaction.PaymentTxn(
-        sender=funder.getAddress(),
+        sender=account.getAddress(),
         receiver=appAddr,
         amt=fundingAmount,
         sp=suggestedParams,
     )
 
     appCallTxn = transaction.ApplicationCallTxn(
-        sender=funder.getAddress(),
+        sender=account.getAddress(),
         index=proposalAppId,
         on_complete=transaction.OnComplete.NoOpOC,
         app_args=[b"activate", registrationId.to_bytes(8, "big")],
@@ -350,8 +350,8 @@ def activateProposal(
 
     transaction.assign_group_id([fundAppTxn, appCallTxn])
 
-    signedFundAppTxn = fundAppTxn.sign(funder.getPrivateKey())
-    signedSetupTxn = appCallTxn.sign(funder.getPrivateKey())
+    signedFundAppTxn = fundAppTxn.sign(account.getPrivateKey())
+    signedSetupTxn = appCallTxn.sign(account.getPrivateKey())
 
     client.send_transactions([signedFundAppTxn, signedSetupTxn])
 
@@ -372,255 +372,18 @@ def vote(
         sender=account.getAddress(),
         index=governorAppId,
         on_complete=transaction.OnComplete.NoOpOC,
-        app_args=["authorize_and_burn_vote"],
+        app_args=[b"vote", proposalVote.to_bytes(8, "big")],
         foreign_apps=[proposalAppId],
         sp=suggestedParams,
     )
 
-    voteCallTxn = transaction.ApplicationCallTxn(
-        sender=account.getAddress(),
-        index=proposalAppId,
-        on_complete=transaction.OnComplete.NoOpOC,
-        app_args=["vote", proposalVote.to_bytes(8, "big")],
-        foreign_apps=[governorAppId],
-        sp=suggestedParams,
-    )
-
-    transaction.assign_group_id([authCallTxn, voteCallTxn])
-
     signedAuthTxn = authCallTxn.sign(account.getPrivateKey())
-    signedVoteTxn = voteCallTxn.sign(account.getPrivateKey())
-
-    client.send_transactions([signedAuthTxn, signedVoteTxn])
-    waitForTransaction(client, signedVoteTxn.get_txid())
+    client.send_transaction(signedAuthTxn)
+    waitForTransaction(client, signedAuthTxn.get_txid())
 
 
 def claim(client: AlgodClient, appID: int, amount: int, account: Account) -> None:
     pass
-
-
-def supply(
-    client: AlgodClient, appID: int, qA: int, qB: int, supplier: Account
-) -> None:
-    """Supply liquidity to the pool.
-    Let rA, rB denote the existing pool reserves of token A and token B respectively
-
-    First supplier will receive sqrt(qA*qB) tokens, subsequent suppliers will receive
-    qA/rA where rA is the amount of token A already in the pool.
-    If qA/qB != rA/rB, the pool will first attempt to take full amount qA, returning excess token B
-    Else if there is insufficient amount qB, the pool will then attempt to take the full amount qB, returning
-     excess token A
-    Else transaction will be rejected
-
-    Args:
-        client: AlgodClient,
-        appID: amm app id,
-        qA: amount of token A to supply the pool
-        qB: amount of token B to supply to the pool
-        supplier: supplier account
-    """
-    assertSetup(client, appID)
-    appAddr = get_application_address(appID)
-    appGlobalState = getAppGlobalState(client, appID)
-    suggestedParams = client.suggested_params()
-
-    tokenA = appGlobalState[b"token_a_key"]
-    tokenB = appGlobalState[b"token_b_key"]
-    poolToken = getPoolTokenId(appGlobalState)
-
-    # pay for the fee incurred by AMM for sending back the pool token
-    feeTxn = transaction.PaymentTxn(
-        sender=supplier.getAddress(),
-        receiver=appAddr,
-        amt=2_000,
-        sp=suggestedParams,
-    )
-
-    tokenATxn = transaction.AssetTransferTxn(
-        sender=supplier.getAddress(),
-        receiver=appAddr,
-        index=tokenA,
-        amt=qA,
-        sp=suggestedParams,
-    )
-    tokenBTxn = transaction.AssetTransferTxn(
-        sender=supplier.getAddress(),
-        receiver=appAddr,
-        index=tokenB,
-        amt=qB,
-        sp=suggestedParams,
-    )
-
-    appCallTxn = transaction.ApplicationCallTxn(
-        sender=supplier.getAddress(),
-        index=appID,
-        on_complete=transaction.OnComplete.NoOpOC,
-        app_args=[b"supply"],
-        foreign_assets=[tokenA, tokenB, poolToken],
-        sp=suggestedParams,
-    )
-
-    transaction.assign_group_id([feeTxn, tokenATxn, tokenBTxn, appCallTxn])
-    signedFeeTxn = feeTxn.sign(supplier.getPrivateKey())
-    signedTokenATxn = tokenATxn.sign(supplier.getPrivateKey())
-    signedTokenBTxn = tokenBTxn.sign(supplier.getPrivateKey())
-    signedAppCallTxn = appCallTxn.sign(supplier.getPrivateKey())
-
-    client.send_transactions(
-        [signedFeeTxn, signedTokenATxn, signedTokenBTxn, signedAppCallTxn]
-    )
-    waitForTransaction(client, signedAppCallTxn.get_txid())
-
-
-def withdraw(
-    client: AlgodClient, appID: int, poolTokenAmount: int, withdrawAccount: Account
-) -> None:
-    """Withdraw liquidity  + rewards from the pool back to supplier.
-    Supplier should receive tokenA, tokenB + fees proportional to the liquidity share in the pool they choose to withdraw.
-
-    Args:
-        client: AlgodClient,
-        appID: amm app id,
-        poolTokenAmount: pool token quantity,
-        withdrawAccount: supplier account,
-    """
-    assertSetup(client, appID)
-    appAddr = get_application_address(appID)
-    appGlobalState = getAppGlobalState(client, appID)
-    suggestedParams = client.suggested_params()
-
-    # pay for the fee incurred by AMM for sending back tokens A and B
-    feeTxn = transaction.PaymentTxn(
-        sender=withdrawAccount.getAddress(),
-        receiver=appAddr,
-        amt=2_000,
-        sp=suggestedParams,
-    )
-
-    tokenA = appGlobalState[b"token_a_key"]
-    tokenB = appGlobalState[b"token_b_key"]
-    poolToken = getPoolTokenId(appGlobalState)
-
-    poolTokenTxn = transaction.AssetTransferTxn(
-        sender=withdrawAccount.getAddress(),
-        receiver=appAddr,
-        index=poolToken,
-        amt=poolTokenAmount,
-        sp=suggestedParams,
-    )
-
-    appCallTxn = transaction.ApplicationCallTxn(
-        sender=withdrawAccount.getAddress(),
-        index=appID,
-        on_complete=transaction.OnComplete.NoOpOC,
-        app_args=[b"withdraw"],
-        foreign_assets=[tokenA, tokenB, poolToken],
-        sp=suggestedParams,
-    )
-
-    transaction.assign_group_id([feeTxn, poolTokenTxn, appCallTxn])
-    signedFeeTxn = feeTxn.sign(withdrawAccount.getPrivateKey())
-    signedPoolTokenTxn = poolTokenTxn.sign(withdrawAccount.getPrivateKey())
-    signedAppCallTxn = appCallTxn.sign(withdrawAccount.getPrivateKey())
-
-    client.send_transactions([signedFeeTxn, signedPoolTokenTxn, signedAppCallTxn])
-    waitForTransaction(client, signedAppCallTxn.get_txid())
-
-
-def marketSwap(
-    client: AlgodClient, appID: int, tokenId: int, amount: int, trader: Account
-):
-    """Swap tokenId token for the other token in the pool
-    This action can only happen if there is liquidity in the pool
-    A fee (in bps, configured on app creation) is taken out of the input amount before calculating the output amount
-    """
-    limitSwap(client, appID, tokenId, amount, 0, trader)
-
-
-def limitSwap(
-    client: AlgodClient,
-    appID: int,
-    tokenId: int,
-    amount: int,
-    minOtherAmount: int,
-    trader: Account,
-):
-    """Swap tokenId token for the other token in the pool.
-    Perform the swap only if the other token amount received by the trader is >= minOtherAmount
-    This action can only happen if there is liquidity in the pool
-    A fee (in bps, configured on app creation) is taken out of the input amount before calculating the output amount
-    """
-    assertSetup(client, appID)
-    appAddr = get_application_address(appID)
-    appGlobalState = getAppGlobalState(client, appID)
-    suggestedParams = client.suggested_params()
-
-    feeTxn = transaction.PaymentTxn(
-        sender=trader.getAddress(),
-        receiver=appAddr,
-        amt=1000,
-        sp=suggestedParams,
-    )
-
-    tokenA = appGlobalState[b"token_a_key"]
-    tokenB = appGlobalState[b"token_b_key"]
-
-    tradeTxn = transaction.AssetTransferTxn(
-        sender=trader.getAddress(),
-        receiver=appAddr,
-        index=tokenId,
-        amt=amount,
-        sp=suggestedParams,
-    )
-
-    appCallTxn = transaction.ApplicationCallTxn(
-        sender=trader.getAddress(),
-        index=appID,
-        on_complete=transaction.OnComplete.NoOpOC,
-        app_args=[b"swap", minOtherAmount.to_bytes(8, "big")],
-        foreign_assets=[tokenA, tokenB],
-        sp=suggestedParams,
-    )
-
-    transaction.assign_group_id([feeTxn, tradeTxn, appCallTxn])
-    signedFeeTxn = feeTxn.sign(trader.getPrivateKey())
-    signedTradeTxn = tradeTxn.sign(trader.getPrivateKey())
-    signedAppCallTxn = appCallTxn.sign(trader.getPrivateKey())
-
-    client.send_transactions([signedFeeTxn, signedTradeTxn, signedAppCallTxn])
-    waitForTransaction(client, signedAppCallTxn.get_txid())
-
-
-def closeAmm(client: AlgodClient, appID: int, closer: Account):
-    """Close an amm.
-
-    This action can only happen if there is no liquidity in the pool (outstanding pool tokens = 0).
-
-    Args:
-        client: An Algod client.
-        appID: The app ID of the amm.
-        closer: closer account. Must be the original creator of the pool.
-    """
-
-    deleteTxn = transaction.ApplicationDeleteTxn(
-        sender=closer.getAddress(),
-        index=appID,
-        sp=client.suggested_params(),
-    )
-    signedDeleteTxn = deleteTxn.sign(closer.getPrivateKey())
-
-    client.send_transaction(signedDeleteTxn)
-
-    waitForTransaction(client, signedDeleteTxn.get_txid())
-
-
-def getPoolTokenId(appGlobalState):
-    try:
-        return appGlobalState[b"pool_token_key"]
-    except KeyError:
-        raise RuntimeError(
-            "Pool token id doesn't exist. Make sure the app has been set up"
-        )
 
 
 def assertSetup(client: AlgodClient, appID: int) -> None:

@@ -23,6 +23,6 @@ TARGET_ID_KEY = Bytes("target_id_key")
 REGISTRATION_ID_KEY = Bytes("registration_id_key")
 FOR_VOTES_KEY = Bytes("for_votes_key")
 AGAINST_VOTES_KEY = Bytes("against_votes_key")
-CANCELLED_KEY = Bytes("against_votes_key")
+CAN_EXECUTE_KEY = Bytes("can_execute_key")
 
 SCALING_FACTOR = Int(10 ** 13)

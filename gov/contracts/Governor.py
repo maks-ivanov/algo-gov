@@ -36,9 +36,6 @@ def setup_program():
 def stake_program():
     gov_token_txn_index = Txn.group_index() - Int(1)
 
-    stake_time_start = App.globalGet(START_TIME_KEY)
-    stake_time_end = stake_time_start + App.globalGet(STAKE_TIME_LENGTH_KEY)
-
     address_amount_staked = App.localGetEx(
         Txn.sender(), Global.current_application_id(), ADDRESS_AMOUNT_STAKED_KEY
     )
@@ -85,9 +82,6 @@ def try_delegate_by_type(power_type_key: TealType.bytes):
         delegate_address_id, Global.current_application_id(), power_type_key
     )
 
-    stake_time_start = App.globalGet(START_TIME_KEY)
-    stake_time_end = stake_time_start + App.globalGet(STAKE_TIME_LENGTH_KEY)
-
     on_delegate = Seq(
         address_voting_power,
         delegate_address_power,
@@ -118,13 +112,6 @@ def try_delegate_by_type(power_type_key: TealType.bytes):
 
 
 def register_proposal_program():
-
-    stake_time_start = App.globalGet(START_TIME_KEY)
-    stake_time_end = stake_time_start + App.globalGet(STAKE_TIME_LENGTH_KEY)
-
-    propose_time_start = stake_time_end
-    propose_time_end = propose_time_start + App.globalGet(PROPOSE_TIME_LENGTH_KEY)
-
     proposal_app_id = Int(1)
     address_proposition_power = App.localGetEx(
         Txn.sender(), Global.current_application_id(), ADDRESS_PROPOSITION_POWER_KEY
@@ -150,6 +137,17 @@ def register_proposal_program():
             < App.globalGet(MAX_NUM_PROPOSALS_KEY)
         ),
         App.globalPut(Itob(num_registered_proposals), Txn.applications[1]),
+        App.globalPut(
+            Concat(Itob(num_registered_proposals), Bytes("_"), FOR_VOTES_KEY), Int(0)
+        ),
+        App.globalPut(
+            Concat(Itob(num_registered_proposals), Bytes("_"), AGAINST_VOTES_KEY),
+            Int(0),
+        ),
+        App.globalPut(
+            Concat(Itob(num_registered_proposals), Bytes("_"), CAN_EXECUTE_KEY),
+            Int(1),
+        ),
         App.globalPut(NUM_REGISTERED_PROPOSALS_KEY, num_registered_proposals + Int(1)),
         Approve(),
     )
@@ -157,18 +155,35 @@ def register_proposal_program():
     return on_register_proposal
 
 
-def authorize_and_burn_vote_program():
+def vote_program():
     proposal_app_id = Txn.applications[1]
     proposal_registration_key = App.globalGetEx(Int(1), REGISTRATION_ID_KEY)
 
-    registered_proposal_app_id = App.globalGetEx(Global.current_application_id(), proposal_registration_key.value())
+    registered_proposal_app_id = App.globalGetEx(
+        Global.current_application_id(), proposal_registration_key.value()
+    )
 
     has_voted = App.localGetEx(
         Txn.sender(), Global.current_application_id(), proposal_registration_key.value()
     )
 
-    address_voting_power = App.localGetEx(Txn.sender(), Int(0), ADDRESS_VOTING_POWER_KEY)
+    address_voting_power = App.localGetEx(
+        Txn.sender(), Int(0), ADDRESS_VOTING_POWER_KEY
+    )
 
+    vote_value = Btoi(Txn.application_args[1])
+
+    proposal_for_votes_key = Concat(
+        proposal_registration_key.value(),
+        Bytes("_"),
+        FOR_VOTES_KEY,
+    )
+
+    proposal_against_votes_key = Concat(
+        proposal_registration_key.value(),
+        Bytes("_"),
+        AGAINST_VOTES_KEY,
+    )
 
     return Seq(
         proposal_registration_key,
@@ -183,13 +198,80 @@ def authorize_and_burn_vote_program():
                 Not(has_voted.hasValue()),
                 # enough voting power to participate
                 address_voting_power.value() >= App.globalGet(VOTE_THRESHOLD_KEY),
-                validateInTimePeriod(vote_time_start, vote_time_end)
+                validateInTimePeriod(vote_time_start, vote_time_end),
             )
-        )
-        .Then(
+        ).Then(
             Seq(
-                App.localPut(Txn.sender(), proposal_registration_key.value(), Int(1)), Approve()
+                If(vote_value > Int(0))
+                .Then(
+                    App.globalPut(
+                        proposal_for_votes_key,
+                        App.globalGet(proposal_against_votes_key)
+                        + address_voting_power.value(),
+                    )
+                )
+                .Else(
+                    App.globalPut(
+                        proposal_against_votes_key,
+                        App.globalGet(proposal_against_votes_key)
+                        + address_voting_power.value(),
+                    )
+                ),
+                App.localPut(Txn.sender(), proposal_registration_key.value(), Int(1)),
+                Approve(),
             )
+        ),
+        Reject(),
+    )
+
+
+def execute_proposal_program():
+    # in the future this has to write authorization to the proposal target contract
+    proposal_app_id = Txn.applications[1]
+    proposal_registration_key = App.globalGetEx(Int(1), REGISTRATION_ID_KEY)
+    registered_proposal_app_id = App.globalGetEx(
+        Global.current_application_id(), proposal_registration_key.value()
+    )
+
+    proposal_for_votes_key = Concat(
+        proposal_registration_key.value(),
+        Bytes("_"),
+        FOR_VOTES_KEY,
+    )
+
+    proposal_against_votes_key = Concat(
+        proposal_registration_key.value(),
+        Bytes("_"),
+        AGAINST_VOTES_KEY,
+    )
+
+    for_votes = App.globalGet(proposal_for_votes_key)
+    against_votes = App.globalGet(proposal_against_votes_key)
+
+    proposal_can_execute_key = Concat(
+        proposal_registration_key.value(),
+        Bytes("_"),
+        CAN_EXECUTE_KEY,
+    )
+
+    can_execute = App.globalGet(proposal_can_execute_key)
+
+    return Seq(
+        proposal_registration_key,
+        registered_proposal_app_id,
+        If(
+            And(
+                registered_proposal_app_id.value() == proposal_app_id,
+                for_votes + against_votes
+                >= App.globalGet(QUORUM_THRESHOLD_KEY),
+                for_votes > against_votes,
+                can_execute,
+            )
+        ).Then(
+            # app call to proposal target to authorize proposal execution
+            # app call to proposal contract to execute
+            # app call to proposal target to remove authorization
+            Approve()
         ),
         Reject(),
     )
@@ -216,11 +298,6 @@ def approval_program():
 
     on_stake = stake_program()
 
-    # on_get_address_amount_staked = Return(
-    #     App.localGet(Txn.sender(), ADDRESS_AMOUNT_STAKED_KEY)
-    # )
-    # on_get_address_voting_power = Return(App.localGet(Int(0), ADDRESS_VOTING_POWER_KEY))
-
     on_delegate_voting_power = (
         If(try_delegate_by_type(ADDRESS_VOTING_POWER_KEY))
         .Then(Approve())
@@ -233,7 +310,8 @@ def approval_program():
     )
 
     on_register_proposal = register_proposal_program()
-    on_authorize_and_burn_vote = authorize_and_burn_vote_program()
+    on_vote = vote_program()
+    on_execute_proposal = execute_proposal_program()
 
     on_call_method = Txn.application_args[0]
     on_call = Cond(
@@ -246,8 +324,12 @@ def approval_program():
         ],
         [on_call_method == Bytes("register_proposal"), on_register_proposal],
         [
-            on_call_method == Bytes("authorize_and_burn_vote"),
-            on_authorize_and_burn_vote,
+            on_call_method == Bytes("vote"),
+            on_vote,
+        ],
+        [
+            on_call_method == Bytes("execute_proposal"),
+            on_execute_proposal,
         ],
     )
 
