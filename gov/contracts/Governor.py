@@ -79,6 +79,7 @@ def stake_program():
 
 
 def rollover():
+    i = ScratchVar(TealType.uint64)
     return Seq(
         If(
             App.localGet(Txn.sender(), GOV_SESSION_ID_KEY)
@@ -99,6 +100,12 @@ def rollover():
                 App.localPut(
                     Txn.sender(), GOV_SESSION_ID_KEY, App.globalGet(GOV_SESSION_ID_KEY)
                 ),
+                # remove has_voted flags for each proposal
+                For(
+                    i.store(Int(0)),
+                    i.load() < App.globalGet(MAX_NUM_PROPOSALS_KEY),
+                    i.store(i.load() + Int(1)),
+                ).Do(App.localDel(Txn.sender(), Itob(i.load()))),
             )
         )
     )
