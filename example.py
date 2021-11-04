@@ -86,10 +86,11 @@ def simple_gov():
     print("Charlie's voting info:", getUserLocalState(client, acct1))
     print("t+", getLastBlockTimestamp(client)[1] - t0)
 
+    # point governor to proposal
     registerProposal(client, governorAppId, proposalAppId, creator)
     print("t+", getLastBlockTimestamp(client)[1] - t0)
     print(getAppGlobalState(client, governorAppId))
-    # this points proposal to governor and enables voting
+    # point proposal to governor and enable voting
     activateProposal(client, proposalAppId, governorAppId, 0, acct4)
     print("t+", getLastBlockTimestamp(client)[1] - t0)
     print(getAppGlobalState(client, proposalAppId))
@@ -117,7 +118,7 @@ def simple_gov():
     print(" ")
     targetBalance = getBalances(client, target)
     proposalBalance = getBalances(client, get_application_address(proposalAppId))
-
+    # at this point proposal should have paid out 1000 microalgos to target
     print(proposalBalance)
     print(targetBalance)
 
