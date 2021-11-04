@@ -424,8 +424,40 @@ def executeProposal(
     waitForTransaction(client, signedExecTxn.get_txid())
 
 
+def cancelProposal(
+    client: AlgodClient,
+    governorAppId: int,
+    proposalAppId: int,
+    account: Account,
+) -> None:
+    suggestedParams = client.suggested_params()
+
+    appCallTxn = transaction.ApplicationCallTxn(
+        sender=account.getAddress(),
+        index=governorAppId,
+        on_complete=transaction.OnComplete.NoOpOC,
+        app_args=[b"cancel_proposal"],
+        foreign_apps=[proposalAppId],
+        sp=suggestedParams,
+    )
+
+    signedAppCallTxn = appCallTxn.sign(account.getPrivateKey())
+
+    client.send_transaction(signedAppCallTxn)
+
+    waitForTransaction(client, signedAppCallTxn.get_txid())
+
+
 def claim(client: AlgodClient, appID: int, account: Account) -> None:
-    pass
+    suggestedParams = client.suggested_params()
+
+    closeOutTxn = transaction.ApplicationCloseOutTxn(
+        sender=account.getAddress(), index=appID, sp=suggestedParams
+    )
+
+    signedCloseOutTxn = closeOutTxn.sign(account.getPrivateKey())
+    client.send_transaction(signedCloseOutTxn)
+    waitForTransaction(signedCloseOutTxn.get_txid())
 
 
 def sendToken(
