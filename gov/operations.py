@@ -11,7 +11,6 @@ from .util import (
     waitForTransaction,
     fullyCompileContract,
     getAppGlobalState,
-    getBalances,
 )
 
 GOVERNOR_APPROVAL_PROGRAM = b""
@@ -148,7 +147,7 @@ def createGovernor(
 def setupGovernor(
     client: AlgodClient, appID: int, funder: Account, govTokenId: int
 ) -> int:
-    """Finish setting up an amm.
+    """Finish setting up a governor contract.
 
     This operation funds the pool account, creates pool token,
     and opts app into tokens A and B, all in one atomic transaction group.
@@ -382,15 +381,51 @@ def vote(
     waitForTransaction(client, signedAuthTxn.get_txid())
 
 
-def claim(client: AlgodClient, appID: int, amount: int, account: Account) -> None:
+def executeProposal(
+    client: AlgodClient,
+    governorAppId: int,
+    proposalAppId: int,
+    account: Account,
+) -> None:
+
+    suggestedParams = client.suggested_params()
+
+    authCallTxn = transaction.ApplicationCallTxn(
+        sender=account.getAddress(),
+        index=governorAppId,
+        on_complete=transaction.OnComplete.NoOpOC,
+        app_args=[b"execute_proposal"],
+        foreign_apps=[proposalAppId],
+        sp=suggestedParams,
+    )
+
+    # in the future the below transaction will be deprecated,
+    # as the governor will be able to call execute on the proposal contract directly
+    target = encoding.encode_address(
+        getAppGlobalState(client, proposalAppId)[b"target_id_key"]
+    )
+
+    # print(account.getAddress())
+    execCallTxn = transaction.ApplicationCallTxn(
+        sender=account.getAddress(),
+        index=proposalAppId,
+        on_complete=transaction.OnComplete.NoOpOC,
+        app_args=[b"execute"],
+        accounts=[target],
+        sp=suggestedParams,
+    )
+
+    transaction.assign_group_id([authCallTxn, execCallTxn])
+
+    signedAuthTxn = authCallTxn.sign(account.getPrivateKey())
+    signedExecTxn = execCallTxn.sign(account.getPrivateKey())
+
+    client.send_transactions([signedAuthTxn, signedExecTxn])
+    waitForTransaction(client, signedExecTxn.get_txid())
+
+
+def claim(client: AlgodClient, appID: int, account: Account) -> None:
     pass
-
-
-def assertSetup(client: AlgodClient, appID: int) -> None:
-    balances = getBalances(client, get_application_address(appID))
-    assert (
-        balances[0] >= MIN_BALANCE_REQUIREMENT
-    ), "AMM must be set up and funded first. AMM balances: " + str(balances)
 
 
 def sendToken(

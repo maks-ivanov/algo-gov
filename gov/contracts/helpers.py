@@ -1,9 +1,5 @@
 from pyteal import *
 
-from gov.contracts.config import (
-    SCALING_FACTOR,
-)
-
 
 @Subroutine(TealType.uint64)
 def validateTokenReceived(
@@ -28,11 +24,6 @@ def validateInTimePeriod(
         current_timestamp >= beginTimeStampInclusive,
         current_timestamp < endTimeExclusive,
     )
-
-
-@Subroutine(TealType.uint64)
-def xMulYDivZ(x, y, z) -> Expr:
-    return WideRatio([x, y, SCALING_FACTOR], [z, SCALING_FACTOR])
 
 
 @Subroutine(TealType.none)

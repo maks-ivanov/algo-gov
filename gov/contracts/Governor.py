@@ -149,6 +149,12 @@ def register_proposal_program():
             Int(1),
         ),
         App.globalPut(NUM_REGISTERED_PROPOSALS_KEY, num_registered_proposals + Int(1)),
+        # consume proposition power
+        App.localPut(
+            Txn.sender(),
+            ADDRESS_PROPOSITION_POWER_KEY,
+            address_proposition_power.value() - App.globalGet(PROPOSE_THRESHOLD_KEY),
+        ),
         Approve(),
     )
 
@@ -198,6 +204,7 @@ def vote_program():
                 Not(has_voted.hasValue()),
                 # enough voting power to participate
                 address_voting_power.value() >= App.globalGet(VOTE_THRESHOLD_KEY),
+                # in voting period
                 validateInTimePeriod(vote_time_start, vote_time_end),
             )
         ).Then(
@@ -226,7 +233,6 @@ def vote_program():
 
 
 def execute_proposal_program():
-    # in the future this has to write authorization to the proposal target contract
     proposal_app_id = Txn.applications[1]
     proposal_registration_key = App.globalGetEx(Int(1), REGISTRATION_ID_KEY)
     registered_proposal_app_id = App.globalGetEx(
@@ -262,18 +268,90 @@ def execute_proposal_program():
         If(
             And(
                 registered_proposal_app_id.value() == proposal_app_id,
-                for_votes + against_votes
-                >= App.globalGet(QUORUM_THRESHOLD_KEY),
+                for_votes + against_votes >= App.globalGet(QUORUM_THRESHOLD_KEY),
                 for_votes > against_votes,
                 can_execute,
+                Global.latest_timestamp() > execute_delay_time_end,
             )
         ).Then(
-            # app call to proposal target to authorize proposal execution
-            # app call to proposal contract to execute
-            # app call to proposal target to remove authorization
-            Approve()
+            Seq(
+                # app call to proposal target to authorize proposal execution
+                # app call to proposal contract to execute
+                # app call to proposal target to remove authorization
+                App.globalPut(proposal_can_execute_key, Int(0)),
+                Approve(),
+            )
         ),
         Reject(),
+    )
+
+
+def cancel_proposal_program():
+    proposal_app_id = Txn.applications[1]
+    proposal_registration_key = App.globalGetEx(Int(1), REGISTRATION_ID_KEY)
+    proposal_creator = App.globalGetEx(Int(1), CREATOR_KEY)
+    registered_proposal_app_id = App.globalGetEx(
+        Global.current_application_id(), proposal_registration_key.value()
+    )
+
+    proposal_can_execute_key = Concat(
+        proposal_registration_key.value(),
+        Bytes("_"),
+        CAN_EXECUTE_KEY,
+    )
+
+    return Seq(
+        proposal_registration_key,
+        registered_proposal_app_id,
+        proposal_creator,
+        If(
+            And(
+                registered_proposal_app_id.value() == proposal_app_id,
+                Or(
+                    # governor creator can cancel until the end of execution grace period
+                    And(
+                        Txn.sender() == App.globalGet(CREATOR_KEY),
+                        Global.latest_timestamp() < execute_delay_time_end,
+                    ),
+                    # proposal creator can cancel until the end of the voting period
+                    And(
+                        Txn.sender() == proposal_creator.value(),
+                        Global.latest_timestamp() < vote_time_end,
+                    ),
+                ),
+            )
+        ).Then(
+            Seq(
+                App.globalPut(proposal_can_execute_key, Int(0)),
+                Approve(),
+            )
+        ),
+        Reject(),
+    )
+
+
+def close_out_program():
+    address_amount_staked = App.localGetEx(
+        Txn.sender(), Global.current_application_id(), ADDRESS_AMOUNT_STAKED_KEY
+    )
+
+    return Seq(
+        address_amount_staked,
+        If(address_amount_staked.hasValue()).Then(
+            # if user has staked, they can close out only at the end
+            If(Global.latest_timestamp() >= execute_delay_time_end)
+            .Then(
+                Seq(
+                    sendToken(
+                        GOV_TOKEN_KEY, Txn.sender(), address_amount_staked.value()
+                    ),
+                    Approve(),
+                )
+            )
+            .Else(Reject())
+        ),
+        # if user has not staked, they can close out at any time
+        Approve(),
     )
 
 
@@ -294,8 +372,9 @@ def approval_program():
     )
 
     on_setup = setup_program()
-    on_opt_in = Return(validateInTimePeriod(stake_time_start, stake_time_end))
 
+    # TODO: potentially unify opt in and stake
+    on_opt_in = Return(validateInTimePeriod(stake_time_start, stake_time_end))
     on_stake = stake_program()
 
     on_delegate_voting_power = (
@@ -312,6 +391,7 @@ def approval_program():
     on_register_proposal = register_proposal_program()
     on_vote = vote_program()
     on_execute_proposal = execute_proposal_program()
+    on_cancel_proposal = cancel_proposal_program()
 
     on_call_method = Txn.application_args[0]
     on_call = Cond(
@@ -331,22 +411,21 @@ def approval_program():
             on_call_method == Bytes("execute_proposal"),
             on_execute_proposal,
         ],
+        [on_call_method == Bytes("cancel_proposal"), on_cancel_proposal],
     )
 
+    on_close_out = close_out_program()
+
+    # TODO
     on_delete = Seq(Approve())
 
     program = Cond(
         [Txn.application_id() == Int(0), on_create],
-        [Txn.on_completion() == OnComplete.NoOp, on_call],
-        [Txn.on_completion() == OnComplete.DeleteApplication, on_delete],
         [Txn.on_completion() == OnComplete.OptIn, on_opt_in],
-        [
-            Or(
-                Txn.on_completion() == OnComplete.CloseOut,
-                Txn.on_completion() == OnComplete.UpdateApplication,
-            ),
-            Reject(),
-        ],
+        [Txn.on_completion() == OnComplete.NoOp, on_call],
+        [Txn.on_completion() == OnComplete.CloseOut, on_close_out],
+        [Txn.on_completion() == OnComplete.UpdateApplication, Reject()],
+        [Txn.on_completion() == OnComplete.DeleteApplication, on_delete],
     )
 
     return program
@@ -357,10 +436,10 @@ def clear_state_program():
 
 
 if __name__ == "__main__":
-    with open("amm_approval.teal", "w") as f:
+    with open("governor_approval.teal", "w") as f:
         compiled = compileTeal(approval_program(), mode=Mode.Application, version=5)
         f.write(compiled)
 
-    with open("amm_clear_state.teal", "w") as f:
+    with open("governor_clear_state.teal", "w") as f:
         compiled = compileTeal(clear_state_program(), mode=Mode.Application, version=5)
         f.write(compiled)

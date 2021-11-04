@@ -13,6 +13,7 @@ from gov.operations import (
     registerProposal,
     activateProposal,
     vote,
+    executeProposal,
 )
 from gov.util import (
     getBalances,
@@ -50,17 +51,18 @@ def simple_gov():
         govTokenId=govToken,
         proposeThreshold=5,
         voteThreshold=1,
-        quorumThreshold=50,
+        quorumThreshold=20,
         stakeTimeLengthSeconds=301,
         proposeTimeLengthSeconds=100,
         voteTimeLengthSeconds=100,
-        executeDelaySeconds=100,
+        executeDelaySeconds=50,
     )
 
-    print("Jeff is creating a proposal contract...")
+    print("acct3 is creating a proposal contract that pays to acct4...")
     proposalAppId = createProposal(
         client=client, creator=acct3, governorId=governorAppId, targetId=acct4
     )
+
     print("Proposal id", proposalAppId)
     print(getAppGlobalState(client, proposalAppId))
 
@@ -78,24 +80,46 @@ def simple_gov():
     print("Charlie's voting info:", getUserLocalState(client, acct1))
 
     print("Charlie is delegating his votes to Alice")
-    print(getLastBlockTimestamp(client)[1] - t0)
+    print("t+", getLastBlockTimestamp(client)[1] - t0)
     delegateVotingPower(client, governorAppId, acct1, creator)  # 300
     print("Alice's voting info:", getUserLocalState(client, creator))
     print("Charlie's voting info:", getUserLocalState(client, acct1))
-    print(getLastBlockTimestamp(client)[1] - t0)
+    print("t+", getLastBlockTimestamp(client)[1] - t0)
 
-    sleep(3)
     registerProposal(client, governorAppId, proposalAppId, creator)
-    print(getLastBlockTimestamp(client)[1] - t0)
+    print("t+", getLastBlockTimestamp(client)[1] - t0)
     print(getAppGlobalState(client, governorAppId))
     # this points proposal to governor and enables voting
     activateProposal(client, proposalAppId, governorAppId, 0, acct4)
-    print(getLastBlockTimestamp(client)[1] - t0)
+    print("t+", getLastBlockTimestamp(client)[1] - t0)
     print(getAppGlobalState(client, proposalAppId))
 
-    sleep(3)
     vote(client, governorAppId, proposalAppId, 1, creator)
     print(getAppGlobalState(client, governorAppId))
+    print("t+", getLastBlockTimestamp(client)[1] - t0)
+
+    for _ in range(2):  # hack to tick time faster
+        sendToken(client, creator, govToken, 1, acct1)
+
+    print("t+", getLastBlockTimestamp(client)[1] - t0)
+
+    target = encoding.encode_address(
+        getAppGlobalState(client, proposalAppId)[b"target_id_key"]
+    )
+    targetBalance = getBalances(client, target)
+    proposalBalance = getBalances(client, get_application_address(proposalAppId))
+
+    print(proposalBalance)
+    print(targetBalance)
+
+    executeProposal(client, governorAppId, proposalAppId, creator)
+    print(getAppGlobalState(client, governorAppId))
+    print(" ")
+    targetBalance = getBalances(client, target)
+    proposalBalance = getBalances(client, get_application_address(proposalAppId))
+
+    print(proposalBalance)
+    print(targetBalance)
 
 
 simple_gov()

@@ -6,6 +6,8 @@ governor_id = Int(1)
 
 def activate_proposal_program():
     # in the future this is where the contract may need to opt into the governor
+    # for now it just checks that proposal has been successfully registered with the governor,
+    # and writes registration id to the state to simplify future opps
     # proposal index
     external_registration_id_key = Txn.application_args[1]
     # the app id stored at the governor's proposal index
@@ -31,8 +33,8 @@ def execute_program():
         InnerTxnBuilder.SetFields(
             {
                 TxnField.type_enum: TxnType.Payment,
-                TxnField.asset_receiver: App.globalGet(TARGET_ID_KEY),
-                TxnField.asset_amount: Int(1000),
+                TxnField.receiver: App.globalGet(TARGET_ID_KEY),
+                TxnField.amount: Int(1000),
             }
         ),
         InnerTxnBuilder.Submit(),
@@ -88,10 +90,10 @@ def clear_state_program():
 
 
 if __name__ == "__main__":
-    with open("amm_approval.teal", "w") as f:
+    with open("proposal_approval.teal", "w") as f:
         compiled = compileTeal(approval_program(), mode=Mode.Application, version=5)
         f.write(compiled)
 
-    with open("amm_clear_state.teal", "w") as f:
+    with open("proposal_clear_state.teal", "w") as f:
         compiled = compileTeal(clear_state_program(), mode=Mode.Application, version=5)
         f.write(compiled)
