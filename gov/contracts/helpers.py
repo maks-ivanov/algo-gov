@@ -1,5 +1,7 @@
 from pyteal import *
 
+from gov.contracts.config import FOR_VOTES_KEY, AGAINST_VOTES_KEY, CAN_EXECUTE_KEY
+
 
 @Subroutine(TealType.uint64)
 def validateTokenReceived(
@@ -23,6 +25,38 @@ def validateInTimePeriod(
     return And(
         current_timestamp >= beginTimeStampInclusive,
         current_timestamp < endTimeExclusive,
+    )
+
+
+@Subroutine(TealType.none)
+def register_proposal(registration_slot: TealType.uint64):
+    return Seq(
+        App.globalPut(Itob(registration_slot), Txn.applications[1]),
+        App.globalPut(
+            Concat(Itob(registration_slot), Bytes("_"), FOR_VOTES_KEY), Int(0)
+        ),
+        App.globalPut(
+            Concat(Itob(registration_slot), Bytes("_"), AGAINST_VOTES_KEY),
+            Int(0),
+        ),
+        App.globalPut(
+            Concat(Itob(registration_slot), Bytes("_"), CAN_EXECUTE_KEY),
+            Int(1),
+        ),
+    )
+
+
+@Subroutine(TealType.none)
+def unregister_proposal(registration_slot: TealType.uint64):
+    return Seq(
+        App.globalDel(Itob(registration_slot)),
+        App.globalDel(Concat(Itob(registration_slot), Bytes("_"), FOR_VOTES_KEY)),
+        App.globalDel(
+            Concat(Itob(registration_slot), Bytes("_"), AGAINST_VOTES_KEY),
+        ),
+        App.globalDel(
+            Concat(Itob(registration_slot), Bytes("_"), CAN_EXECUTE_KEY),
+        ),
     )
 
 

@@ -33,7 +33,7 @@ def simple_gov():
     client = getAlgodClient()
 
     print("Alice is generating temporary accounts...")
-    creator = getTemporaryAccount(client)
+    creator = getTemporaryAccount(client)  # voter 0
     acct1 = getTemporaryAccount(client)  # voter 1
     acct2 = getTemporaryAccount(client)  # voter 2
     acct3 = getTemporaryAccount(client)  # proposal creator

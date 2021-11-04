@@ -6,18 +6,21 @@ algo_holding = AssetHolding.balance(Global.current_application_address(), Int(0)
 start_time_exists = App.globalGetEx(Global.current_application_id(), START_TIME_KEY)
 
 stake_time_start = App.globalGet(START_TIME_KEY)
-stake_time_end = stake_time_start + App.globalGet(STAKE_TIME_LENGTH_KEY)
+stake_time_end = stake_time_start + App.globalGet(STAKE_PERIOD_DURATION_KEY)
 
 propose_time_start = stake_time_end
-propose_time_end = propose_time_start + App.globalGet(PROPOSE_TIME_LENGTH_KEY)
+propose_time_end = propose_time_start + App.globalGet(PROPOSE_PERIOD_DURATION_KEY)
 
 vote_time_start = propose_time_end
-vote_time_end = vote_time_start + App.globalGet(VOTE_TIME_LENGTH_KEY)
+vote_time_end = vote_time_start + App.globalGet(VOTE_PERIOD_DURATION_KEY)
 
 execute_delay_time_start = vote_time_end
-execute_delay_time_end = execute_delay_time_start + App.globalGet(EXECUTE_DELAY_KEY)
+execute_delay_time_end = execute_delay_time_start + App.globalGet(
+    EXECUTE_DELAY_DURATION_KEY
+)
 
 claim_time_start = execute_delay_time_end
+claim_time_end = claim_time_start + App.globalGet(CLAIM_PERIOD_DURATION_KEY)
 
 
 def setup_program():
@@ -29,6 +32,7 @@ def setup_program():
         Assert(Not(start_time_exists.hasValue())),
         optIn(GOV_TOKEN_KEY),
         App.globalPut(START_TIME_KEY, Global.latest_timestamp()),
+        App.globalPut(GOV_SESSION_ID_KEY, Int(0)),
         Approve(),
     )
 
@@ -61,6 +65,9 @@ def stake_program():
                     ADDRESS_PROPOSITION_POWER_KEY,
                     Gtxn[gov_token_txn_index].asset_amount(),
                 ),
+                App.localPut(
+                    Txn.sender(), GOV_SESSION_ID_KEY, App.globalGet(GOV_SESSION_ID_KEY)
+                ),
                 Approve(),
             )
         ),
@@ -69,6 +76,32 @@ def stake_program():
     )
 
     return on_stake
+
+
+def rollover():
+    return Seq(
+        If(
+            App.localGet(Txn.sender(), GOV_SESSION_ID_KEY)
+            != App.globalGet(GOV_SESSION_ID_KEY)
+        ).Then(
+            Seq(
+                # undo all delegation
+                App.localPut(
+                    Txn.sender(),
+                    ADDRESS_VOTING_POWER_KEY,
+                    App.localGet(Txn.sender(), ADDRESS_AMOUNT_STAKED_KEY),
+                ),
+                App.localPut(
+                    Txn.sender(),
+                    ADDRESS_PROPOSITION_POWER_KEY,
+                    App.localGet(Txn.sender(), ADDRESS_AMOUNT_STAKED_KEY),
+                ),
+                App.localPut(
+                    Txn.sender(), GOV_SESSION_ID_KEY, App.globalGet(GOV_SESSION_ID_KEY)
+                ),
+            )
+        )
+    )
 
 
 @Subroutine(TealType.uint64)
@@ -83,6 +116,7 @@ def try_delegate_by_type(power_type_key: TealType.bytes):
     )
 
     on_delegate = Seq(
+        rollover(),
         address_voting_power,
         delegate_address_power,
         If(
@@ -121,6 +155,7 @@ def register_proposal_program():
     num_registered_proposals = App.globalGet(NUM_REGISTERED_PROPOSALS_KEY)
 
     on_register_proposal = Seq(
+        rollover(),
         address_proposition_power,
         proposal_governor_id,
         # check that it is proposition time
@@ -132,22 +167,8 @@ def register_proposal_program():
         ),
         Assert(proposal_governor_id.hasValue()),
         Assert(proposal_governor_id.value() == Global.current_application_id()),
-        Assert(
-            App.globalGet(NUM_REGISTERED_PROPOSALS_KEY)
-            < App.globalGet(MAX_NUM_PROPOSALS_KEY)
-        ),
-        App.globalPut(Itob(num_registered_proposals), Txn.applications[1]),
-        App.globalPut(
-            Concat(Itob(num_registered_proposals), Bytes("_"), FOR_VOTES_KEY), Int(0)
-        ),
-        App.globalPut(
-            Concat(Itob(num_registered_proposals), Bytes("_"), AGAINST_VOTES_KEY),
-            Int(0),
-        ),
-        App.globalPut(
-            Concat(Itob(num_registered_proposals), Bytes("_"), CAN_EXECUTE_KEY),
-            Int(1),
-        ),
+        Assert(num_registered_proposals < App.globalGet(MAX_NUM_PROPOSALS_KEY)),
+        register_proposal(num_registered_proposals),
         App.globalPut(NUM_REGISTERED_PROPOSALS_KEY, num_registered_proposals + Int(1)),
         # consume proposition power
         App.localPut(
@@ -159,6 +180,26 @@ def register_proposal_program():
     )
 
     return on_register_proposal
+
+
+def start_new_governance_session():
+    i = ScratchVar(TealType.uint64)
+    return Seq(
+        If(Global.latest_timestamp() > claim_time_end).Then(
+            Seq(
+                App.globalPut(
+                    GOV_SESSION_ID_KEY, App.globalGet(GOV_SESSION_ID_KEY) + Int(1)
+                ),
+                For(
+                    i.store(Int(0)),
+                    i.load() < App.globalGet(NUM_REGISTERED_PROPOSALS_KEY),
+                    i.store(i.load() + Int(1)),
+                ).Do(unregister_proposal(i.load())),
+                App.globalPut(NUM_REGISTERED_PROPOSALS_KEY, Int(0)),
+                App.globalPut(START_TIME_KEY, Global.latest_timestamp()),
+            )
+        )
+    )
 
 
 def vote_program():
@@ -192,6 +233,7 @@ def vote_program():
     )
 
     return Seq(
+        rollover(),
         proposal_registration_key,
         registered_proposal_app_id,
         has_voted,
@@ -362,10 +404,10 @@ def approval_program():
         App.globalPut(PROPOSE_THRESHOLD_KEY, Btoi(Txn.application_args[2])),
         App.globalPut(VOTE_THRESHOLD_KEY, Btoi(Txn.application_args[3])),
         App.globalPut(QUORUM_THRESHOLD_KEY, Btoi(Txn.application_args[4])),
-        App.globalPut(STAKE_TIME_LENGTH_KEY, Btoi(Txn.application_args[5])),
-        App.globalPut(PROPOSE_TIME_LENGTH_KEY, Btoi(Txn.application_args[6])),
-        App.globalPut(VOTE_TIME_LENGTH_KEY, Btoi(Txn.application_args[7])),
-        App.globalPut(EXECUTE_DELAY_KEY, Btoi(Txn.application_args[8])),
+        App.globalPut(STAKE_PERIOD_DURATION_KEY, Btoi(Txn.application_args[5])),
+        App.globalPut(PROPOSE_PERIOD_DURATION_KEY, Btoi(Txn.application_args[6])),
+        App.globalPut(VOTE_PERIOD_DURATION_KEY, Btoi(Txn.application_args[7])),
+        App.globalPut(EXECUTE_DELAY_DURATION_KEY, Btoi(Txn.application_args[8])),
         App.globalPut(NUM_REGISTERED_PROPOSALS_KEY, Int(0)),
         App.globalPut(MAX_NUM_PROPOSALS_KEY, Int(5)),
         Approve(),

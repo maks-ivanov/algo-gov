@@ -107,10 +107,10 @@ def createGovernor(
     """
     approval, clear = getGovernorContracts(client)
 
-    # 7 params + creation time + num active proposals + 5 proposal slots with for, against, and can_execute
-    globalSchema = transaction.StateSchema(num_uints=7 + 2 + 5 * 4, num_byte_slices=1)
-    # tokens committed, voting power, proposal power, proposals voted
-    localSchema = transaction.StateSchema(num_uints=3 + 5, num_byte_slices=0)
+    # 7 params + creation time + session counter + num active proposals + 5 proposal slots with for, against, and can_execute
+    globalSchema = transaction.StateSchema(num_uints=7 + 3 + 5 * 4, num_byte_slices=1)
+    # tokens committed, voting power, proposal power, session counter, 5 proposal voted flag
+    localSchema = transaction.StateSchema(num_uints=4 + 5, num_byte_slices=0)
 
     app_args = [
         encoding.decode_address(creator.getAddress()),
