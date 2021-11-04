@@ -11,7 +11,7 @@ VOTE_PERIOD_DURATION_KEY = Bytes("vote_period_duration_key")
 EXECUTE_DELAY_DURATION_KEY = Bytes("execute_delay_duration_key")
 CLAIM_PERIOD_DURATION_KEY = Bytes("claim_period_duration_key")
 START_TIME_KEY = Bytes("start_time_key")
-GOV_SESSION_ID_KEY = Bytes("gov_session_id_key")
+GOV_CYCLE_ID_KEY = Bytes("gov_cycle_id_key")
 
 NUM_REGISTERED_PROPOSALS_KEY = Bytes("num_active_proposals_key")
 MAX_NUM_PROPOSALS_KEY = Bytes("max_num_proposals_key")

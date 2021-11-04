@@ -23,20 +23,6 @@ claim_time_start = execute_delay_time_end
 claim_time_end = claim_time_start + App.globalGet(CLAIM_PERIOD_DURATION_KEY)
 
 
-def setup_program():
-    return Seq(
-        algo_holding,
-        start_time_exists,
-        # can only set up once
-        Assert(algo_holding.value() == Int(0)),
-        Assert(Not(start_time_exists.hasValue())),
-        optIn(GOV_TOKEN_KEY),
-        App.globalPut(START_TIME_KEY, Global.latest_timestamp()),
-        App.globalPut(GOV_SESSION_ID_KEY, Int(0)),
-        Approve(),
-    )
-
-
 def stake_program():
     gov_token_txn_index = Txn.group_index() - Int(1)
 
@@ -66,7 +52,7 @@ def stake_program():
                     Gtxn[gov_token_txn_index].asset_amount(),
                 ),
                 App.localPut(
-                    Txn.sender(), GOV_SESSION_ID_KEY, App.globalGet(GOV_SESSION_ID_KEY)
+                    Txn.sender(), GOV_CYCLE_ID_KEY, App.globalGet(GOV_CYCLE_ID_KEY)
                 ),
                 Approve(),
             )
@@ -79,11 +65,15 @@ def stake_program():
 
 
 def rollover():
+    """
+    Update user governance powers if the user has staked in the previous cycle and
+    has not claimed during previous claim period
+    """
     i = ScratchVar(TealType.uint64)
     return Seq(
         If(
-            App.localGet(Txn.sender(), GOV_SESSION_ID_KEY)
-            != App.globalGet(GOV_SESSION_ID_KEY)
+            App.localGet(Txn.sender(), GOV_CYCLE_ID_KEY)
+            != App.globalGet(GOV_CYCLE_ID_KEY)
         ).Then(
             Seq(
                 # undo all delegation
@@ -97,15 +87,16 @@ def rollover():
                     ADDRESS_PROPOSITION_POWER_KEY,
                     App.localGet(Txn.sender(), ADDRESS_AMOUNT_STAKED_KEY),
                 ),
-                App.localPut(
-                    Txn.sender(), GOV_SESSION_ID_KEY, App.globalGet(GOV_SESSION_ID_KEY)
-                ),
                 # remove has_voted flags for each proposal
                 For(
                     i.store(Int(0)),
                     i.load() < App.globalGet(MAX_NUM_PROPOSALS_KEY),
                     i.store(i.load() + Int(1)),
                 ).Do(App.localDel(Txn.sender(), Itob(i.load()))),
+                # update user's cycle
+                App.localPut(
+                    Txn.sender(), GOV_CYCLE_ID_KEY, App.globalGet(GOV_CYCLE_ID_KEY)
+                ),
             )
         )
     )
@@ -189,13 +180,16 @@ def register_proposal_program():
     return on_register_proposal
 
 
-def start_new_governance_session():
+def begin_new_governance_cycle_program():
+    """
+    Reset after the previous governance cycle has completed
+    """
     i = ScratchVar(TealType.uint64)
     return Seq(
         If(Global.latest_timestamp() > claim_time_end).Then(
             Seq(
                 App.globalPut(
-                    GOV_SESSION_ID_KEY, App.globalGet(GOV_SESSION_ID_KEY) + Int(1)
+                    GOV_CYCLE_ID_KEY, App.globalGet(GOV_CYCLE_ID_KEY) + Int(1)
                 ),
                 For(
                     i.store(Int(0)),
@@ -204,8 +198,10 @@ def start_new_governance_session():
                 ).Do(unregister_proposal(i.load())),
                 App.globalPut(NUM_REGISTERED_PROPOSALS_KEY, Int(0)),
                 App.globalPut(START_TIME_KEY, Global.latest_timestamp()),
+                Approve(),
             )
-        )
+        ),
+        Reject(),
     )
 
 
@@ -388,7 +384,7 @@ def close_out_program():
         address_amount_staked,
         If(address_amount_staked.hasValue()).Then(
             # if user has staked, they can close out only at the end
-            If(Global.latest_timestamp() >= execute_delay_time_end)
+            If(validateInTimePeriod(claim_time_start, claim_time_end))
             .Then(
                 Seq(
                     sendToken(
@@ -415,12 +411,24 @@ def approval_program():
         App.globalPut(PROPOSE_PERIOD_DURATION_KEY, Btoi(Txn.application_args[6])),
         App.globalPut(VOTE_PERIOD_DURATION_KEY, Btoi(Txn.application_args[7])),
         App.globalPut(EXECUTE_DELAY_DURATION_KEY, Btoi(Txn.application_args[8])),
+        App.globalPut(CLAIM_PERIOD_DURATION_KEY, Btoi(Txn.application_args[9])),
         App.globalPut(NUM_REGISTERED_PROPOSALS_KEY, Int(0)),
         App.globalPut(MAX_NUM_PROPOSALS_KEY, Int(5)),
         Approve(),
     )
 
-    on_setup = setup_program()
+    on_setup = Seq(
+        algo_holding,
+        start_time_exists,
+        # can only set up once
+        Assert(algo_holding.value() == Int(0)),
+        Assert(Not(start_time_exists.hasValue())),
+        optIn(GOV_TOKEN_KEY),
+        # kick off the first governance cycle
+        App.globalPut(START_TIME_KEY, Global.latest_timestamp()),
+        App.globalPut(GOV_CYCLE_ID_KEY, Int(0)),
+        Approve(),
+    )
 
     # TODO: potentially unify opt in and stake
     on_opt_in = Return(validateInTimePeriod(stake_time_start, stake_time_end))
@@ -441,6 +449,7 @@ def approval_program():
     on_vote = vote_program()
     on_execute_proposal = execute_proposal_program()
     on_cancel_proposal = cancel_proposal_program()
+    on_begin_new_governance_cycle = begin_new_governance_cycle_program()
 
     on_call_method = Txn.application_args[0]
     on_call = Cond(
@@ -461,6 +470,10 @@ def approval_program():
             on_execute_proposal,
         ],
         [on_call_method == Bytes("cancel_proposal"), on_cancel_proposal],
+        [
+            on_call_method == Bytes("begin_new_governance_cycle"),
+            on_begin_new_governance_cycle,
+        ],
     )
 
     on_close_out = close_out_program()

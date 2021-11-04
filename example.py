@@ -14,6 +14,7 @@ from gov.operations import (
     activateProposal,
     vote,
     executeProposal,
+    claim, beginNewGovernanceCycle,
 )
 from gov.util import (
     getBalances,
@@ -52,10 +53,11 @@ def simple_gov():
         proposeThreshold=5,
         voteThreshold=1,
         quorumThreshold=20,
-        stakeTimeLengthSeconds=301,
-        proposeTimeLengthSeconds=100,
-        voteTimeLengthSeconds=100,
+        stakeDurationSeconds=301,
+        proposeDurationSeconds=100,
+        voteDurationSeconds=100,
         executeDelaySeconds=50,
+        claimDurationSeconds=100,
     )
 
     print("acct3 is creating a proposal contract that pays to acct4...")
@@ -121,6 +123,10 @@ def simple_gov():
     # at this point proposal should have paid out 1000 microalgos to target
     print(proposalBalance)
     print(targetBalance)
+    print("t+", getLastBlockTimestamp(client)[1] - t0)
+
+    claim(client, governorAppId, acct1)
+    beginNewGovernanceCycle(client, governorAppId, creator)
 
 
 simple_gov()

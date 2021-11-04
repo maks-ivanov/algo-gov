@@ -83,10 +83,11 @@ def createGovernor(
     proposeThreshold: int,
     voteThreshold: int,
     quorumThreshold: int,
-    stakeTimeLengthSeconds: int,
-    proposeTimeLengthSeconds: int,
-    voteTimeLengthSeconds: int,
+    stakeDurationSeconds: int,
+    proposeDurationSeconds: int,
+    voteDurationSeconds: int,
     executeDelaySeconds: int,
+    claimDurationSeconds: int,
 ) -> int:
     """Create a new amm.
 
@@ -97,9 +98,9 @@ def createGovernor(
         proposeThreshold: minimum voting power required to create a proposal
         voteThreshold: minimum voting power required to vote on a proposal
         quorumThreshold: minimum votes cast to pass a proposal
-        stakeTimeLengthSeconds: the time length of staking and delegation period
+        stakeDurationSeconds: the time length of staking and delegation period
         proposeTimeLength: the time length of propose period
-        voteTimeLengthSeconds: the time length of voting period
+        voteDurationSeconds: the time length of voting period
         executeDelaySeconds: the time length of the period between proposal approval and execution
 
     Returns:
@@ -107,9 +108,9 @@ def createGovernor(
     """
     approval, clear = getGovernorContracts(client)
 
-    # 7 params + creation time + session counter + num active proposals + 5 proposal slots with for, against, and can_execute
-    globalSchema = transaction.StateSchema(num_uints=7 + 3 + 5 * 4, num_byte_slices=1)
-    # tokens committed, voting power, proposal power, session counter, 5 proposal voted flag
+    # 8 params + creation time + cycle counter + num active proposals + 5 proposal slots with for, against, and can_execute
+    globalSchema = transaction.StateSchema(num_uints=8 + 3 + 5 * 4, num_byte_slices=1)
+    # tokens committed, voting power, proposal power, session counter, 5 proposal voted flags
     localSchema = transaction.StateSchema(num_uints=4 + 5, num_byte_slices=0)
 
     app_args = [
@@ -118,10 +119,11 @@ def createGovernor(
         proposeThreshold.to_bytes(8, "big"),
         voteThreshold.to_bytes(8, "big"),
         quorumThreshold.to_bytes(8, "big"),
-        stakeTimeLengthSeconds.to_bytes(8, "big"),
-        proposeTimeLengthSeconds.to_bytes(8, "big"),
-        voteTimeLengthSeconds.to_bytes(8, "big"),
+        stakeDurationSeconds.to_bytes(8, "big"),
+        proposeDurationSeconds.to_bytes(8, "big"),
+        voteDurationSeconds.to_bytes(8, "big"),
         executeDelaySeconds.to_bytes(8, "big"),
+        claimDurationSeconds.to_bytes(8, "big"),
     ]
 
     txn = transaction.ApplicationCreateTxn(
@@ -249,6 +251,27 @@ def delegateVotingPower(
         on_complete=transaction.OnComplete.NoOpOC,
         accounts=[delegateTo.getAddress()],
         app_args=[b"delegate_voting_power"],
+        sp=suggestedParams,
+    )
+
+    signedAppCallTxn = appCallTxn.sign(account.getPrivateKey())
+
+    client.send_transaction(signedAppCallTxn)
+
+    waitForTransaction(client, signedAppCallTxn.get_txid())
+
+
+def delegateProposalPower(
+    client: AlgodClient, appID: int, account: Account, delegateTo: Account
+) -> None:
+    suggestedParams = client.suggested_params()
+
+    appCallTxn = transaction.ApplicationCallTxn(
+        sender=account.getAddress(),
+        index=appID,
+        on_complete=transaction.OnComplete.NoOpOC,
+        accounts=[delegateTo.getAddress()],
+        app_args=[b"delegate_proposal_power"],
         sp=suggestedParams,
     )
 
@@ -444,20 +467,48 @@ def cancelProposal(
     signedAppCallTxn = appCallTxn.sign(account.getPrivateKey())
 
     client.send_transaction(signedAppCallTxn)
-
     waitForTransaction(client, signedAppCallTxn.get_txid())
 
 
 def claim(client: AlgodClient, appID: int, account: Account) -> None:
     suggestedParams = client.suggested_params()
+    appAddr = get_application_address(appID)
 
-    closeOutTxn = transaction.ApplicationCloseOutTxn(
-        sender=account.getAddress(), index=appID, sp=suggestedParams
+    feeTxn = transaction.PaymentTxn(
+        sender=account.getAddress(),
+        receiver=appAddr,
+        amt=1000,
+        sp=suggestedParams,
     )
 
+    govToken = getAppGlobalState(client,appID)[b'gov_token_key']
+    closeOutTxn = transaction.ApplicationCloseOutTxn(
+        sender=account.getAddress(), foreign_assets=[govToken], index=appID, sp=suggestedParams
+    )
+
+    transaction.assign_group_id([feeTxn, closeOutTxn])
+
+    signedFeeTxn = feeTxn.sign(account.getPrivateKey())
     signedCloseOutTxn = closeOutTxn.sign(account.getPrivateKey())
-    client.send_transaction(signedCloseOutTxn)
-    waitForTransaction(signedCloseOutTxn.get_txid())
+
+    client.send_transactions([signedFeeTxn, signedCloseOutTxn])
+    waitForTransaction(client, signedCloseOutTxn.get_txid())
+
+
+def beginNewGovernanceCycle(client: AlgodClient, appID: int, account: Account):
+    suggestedParams = client.suggested_params()
+
+    appCallTxn = transaction.ApplicationCallTxn(
+        sender=account.getAddress(),
+        index=appID,
+        on_complete=transaction.OnComplete.NoOpOC,
+        app_args=[b"begin_new_governance_cycle"],
+        sp=suggestedParams,
+    )
+
+    signedAppCallTxn = appCallTxn.sign(account.getPrivateKey())
+    client.send_transaction(signedAppCallTxn)
+    waitForTransaction(client, signedAppCallTxn.get_txid())
 
 
 def sendToken(
