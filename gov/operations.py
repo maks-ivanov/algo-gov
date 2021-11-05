@@ -261,7 +261,7 @@ def delegateVotingPower(
     waitForTransaction(client, signedAppCallTxn.get_txid())
 
 
-def delegateProposalPower(
+def delegatePropositionPower(
     client: AlgodClient, appID: int, account: Account, delegateTo: Account
 ) -> None:
     suggestedParams = client.suggested_params()
@@ -481,9 +481,12 @@ def claim(client: AlgodClient, appID: int, account: Account) -> None:
         sp=suggestedParams,
     )
 
-    govToken = getAppGlobalState(client,appID)[b'gov_token_key']
+    govToken = getAppGlobalState(client, appID)[b"gov_token_key"]
     closeOutTxn = transaction.ApplicationCloseOutTxn(
-        sender=account.getAddress(), foreign_assets=[govToken], index=appID, sp=suggestedParams
+        sender=account.getAddress(),
+        foreign_assets=[govToken],
+        index=appID,
+        sp=suggestedParams,
     )
 
     transaction.assign_group_id([feeTxn, closeOutTxn])

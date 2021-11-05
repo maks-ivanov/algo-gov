@@ -14,7 +14,8 @@ from gov.operations import (
     activateProposal,
     vote,
     executeProposal,
-    claim, beginNewGovernanceCycle,
+    claim,
+    beginNewGovernanceCycle,
 )
 from gov.util import (
     getBalances,

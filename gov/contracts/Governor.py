@@ -161,7 +161,7 @@ def register_proposal_program():
         # check that address has enough power to propose
         Assert(address_proposition_power.hasValue()),
         Assert(
-            address_proposition_power.value() > App.globalGet(PROPOSE_THRESHOLD_KEY)
+            address_proposition_power.value() >= App.globalGet(PROPOSE_THRESHOLD_KEY)
         ),
         Assert(proposal_governor_id.hasValue()),
         Assert(proposal_governor_id.value() == Global.current_application_id()),
@@ -186,7 +186,13 @@ def begin_new_governance_cycle_program():
     """
     i = ScratchVar(TealType.uint64)
     return Seq(
-        If(Global.latest_timestamp() > claim_time_end).Then(
+        start_time_exists,
+        If(
+            And(
+                start_time_exists.hasValue(),
+                Global.latest_timestamp() > claim_time_end,
+            )
+        ).Then(
             Seq(
                 App.globalPut(
                     GOV_CYCLE_ID_KEY, App.globalGet(GOV_CYCLE_ID_KEY) + Int(1)
