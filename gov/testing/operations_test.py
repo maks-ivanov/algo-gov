@@ -135,5 +135,3 @@ def test_setup():
         with pytest.raises(algosdk.error.AlgodHTTPError):
             op()
 
-
-def se
